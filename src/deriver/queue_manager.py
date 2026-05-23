@@ -11,7 +11,7 @@ import sentry_sdk
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from sentry_sdk.integrations.asyncio import AsyncioIntegration
-from sqlalchemy import and_, delete, or_, select, update
+from sqlalchemy import and_, delete, or_, select, text as sa_text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -280,6 +280,8 @@ class QueueManager:
         Get available work units that aren't being processed.
         For representation tasks, only returns work units with accumulated tokens
         >= REPRESENTATION_BATCH_MAX_TOKENS (forced batching), unless FLUSH_ENABLED is True.
+        If REPRESENTATION_BATCH_AGE_LIMIT_SECONDS > 0, also includes representation work
+        units whose oldest unprocessed item exceeds the age limit, regardless of token count.
         Returns a dict mapping work_unit_key to aqs_id.
         """
         limit: int = max(0, self.workers - self.get_total_owned_work_units())
@@ -287,6 +289,7 @@ class QueueManager:
             return {}
 
         batch_max_tokens = settings.DERIVER.REPRESENTATION_BATCH_MAX_TOKENS
+        age_limit_seconds = settings.DERIVER.REPRESENTATION_BATCH_AGE_LIMIT_SECONDS
 
         async with tracked_db("get_available_work_units") as db:
             representation_prefix = "representation:"
@@ -329,17 +332,55 @@ class QueueManager:
                 )
             )
 
+            # Age bypass subquery: oldest unprocessed item per representation work unit
+            age_subq: Any | None = None
+            if (
+                not settings.DERIVER.FLUSH_ENABLED
+                and batch_max_tokens > 0
+                and age_limit_seconds > 0
+            ):
+                age_subq = (
+                    select(
+                        models.QueueItem.work_unit_key,
+                        func.min(models.QueueItem.created_at).label(
+                            "oldest_created_at"
+                        ),
+                    )
+                    .where(~models.QueueItem.processed)
+                    .where(
+                        models.QueueItem.work_unit_key.startswith(
+                            representation_prefix
+                        )
+                    )
+                    .group_by(models.QueueItem.work_unit_key)
+                    .subquery()
+                )
+                query = query.outerjoin(
+                    age_subq,
+                    work_units_subq.c.work_unit_key
+                    == age_subq.c.work_unit_key,
+                )
+
             # Apply batch threshold filter (skip if FLUSH_ENABLED is True)
             if not settings.DERIVER.FLUSH_ENABLED and batch_max_tokens > 0:
-                query = query.where(
-                    or_(
-                        ~work_units_subq.c.work_unit_key.startswith(
-                            representation_prefix
-                        ),
-                        func.coalesce(token_stats_subq.c.total_tokens, 0)
-                        >= batch_max_tokens,
+                conditions = [
+                    ~work_units_subq.c.work_unit_key.startswith(
+                        representation_prefix
+                    ),
+                    func.coalesce(token_stats_subq.c.total_tokens, 0)
+                    >= batch_max_tokens,
+                ]
+
+                # Age-based bypass: process work units that have been waiting too long
+                # regardless of token count
+                if age_subq is not None:
+                    conditions.append(
+                        age_subq.c.oldest_created_at
+                        <= func.now()
+                        - sa_text(f"interval '{age_limit_seconds} seconds'"),
                     )
-                )
+
+                query = query.where(or_(*conditions))
 
             result = await db.execute(query)
             available_units = result.scalars().all()

@@ -780,6 +780,14 @@ class DeriverSettings(HonchoSettings):
     # When enabled, bypasses the batch token threshold and processes work immediately
     FLUSH_ENABLED: bool = False
 
+    # Age limit in seconds: if a representation work unit's oldest unprocessed item
+    # exceeds this age, process it regardless of the token threshold.
+    # Set to 0 to disable aging bypass. Default: 1 hour (3600).
+    REPRESENTATION_BATCH_AGE_LIMIT_SECONDS: Annotated[
+        int,
+        Field(default=3600, ge=0, le=86_400),
+    ] = 3600
+
     @model_validator(mode="before")
     @classmethod
     def _merge_model_config_defaults(cls, data: Any) -> Any:
