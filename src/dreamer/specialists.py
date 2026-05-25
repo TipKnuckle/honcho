@@ -99,7 +99,7 @@ class BaseSpecialist(ABC):
 
     def get_max_iterations(self) -> int:
         """Get max tool iterations."""
-        return 15
+        return settings.DREAM.MAX_TOOL_ITERATIONS
 
     @abstractmethod
     def build_system_prompt(
@@ -482,7 +482,7 @@ class DeductionSpecialist(BaseSpecialist):
         return 8192
 
     def get_max_iterations(self) -> int:
-        return 12
+        return settings.DREAM.MAX_TOOL_ITERATIONS
 
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
@@ -668,7 +668,7 @@ class InductionSpecialist(BaseSpecialist):
         return 8192
 
     def get_max_iterations(self) -> int:
-        return 10
+        return settings.DREAM.MAX_TOOL_ITERATIONS
 
     def build_system_prompt(
         self, observed: str, *, peer_card_enabled: bool = True
