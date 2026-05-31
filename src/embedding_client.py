@@ -178,6 +178,7 @@ class _EmbeddingClient:
         self.model: str = config.model
         self.vector_dimensions: int = vector_dimensions
         self.send_dimensions: bool = send_dimensions
+        self.query_instruction: str | None = config.query_instruction
 
         if self.transport == "gemini":
             if not config.api_key:
@@ -224,6 +225,9 @@ class _EmbeddingClient:
         return embedding
 
     async def embed(self, query: str) -> list[float]:
+        if self.query_instruction:
+            query = f"Instruct: {self.query_instruction}\nQuery: {query}"
+
         token_count = len(self.encoding.encode(query))
 
         if token_count > self.max_embedding_tokens:
@@ -623,6 +627,7 @@ class EmbeddingClient:
             runtime_config.model,
             runtime_config.api_key,
             runtime_config.base_url,
+            runtime_config.query_instruction,
             settings.EMBEDDING.VECTOR_DIMENSIONS,
             settings.EMBEDDING.MAX_INPUT_TOKENS,
             settings.EMBEDDING.MAX_TOKENS_PER_REQUEST,
